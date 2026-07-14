@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 const ETHANOL_DENSITY_G_PER_ML = 0.789;
 const ELIMINATION_RATE_GL_PER_HOUR = 0.15;
+const SELECT_PLACEHOLDER_VALUE = "0";
 
 const DRINKS = [
   { label: "Cerveza", abv: 5 },
@@ -116,10 +117,10 @@ const BODY_COEFFICIENTS: BodyCoefficient[] = [
 const initialIntake = (id = Date.now()): Intake => ({
   id,
   mode: "cup",
-  name: "Cerveza",
+  name: SELECT_PLACEHOLDER_VALUE,
   quantity: 1,
-  cupMl: 300,
-  abv: 5,
+  cupMl: 0,
+  abv: 0,
   fillPercent: 100,
   alcoholPartPercent: 50,
   grams: 14,
@@ -140,7 +141,9 @@ function ethanolFromIntake(intake: Intake) {
       (Math.max(0, intake.alcoholPartPercent) / 100) *
       Math.max(0, intake.quantity);
 
-    return alcoholicMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML;
+    return (
+      alcoholicMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML
+    );
   }
 
   const drinkMl =
@@ -152,15 +155,15 @@ function ethanolFromIntake(intake: Intake) {
 }
 
 function getSelectedCoefficient(body: BodyState) {
-  return (
-    BODY_COEFFICIENTS.find((coefficient) => coefficient.id === body.coefficientId) ??
-    BODY_COEFFICIENTS[0]
+  return BODY_COEFFICIENTS.find(
+    (coefficient) => coefficient.id === body.coefficientId,
   );
 }
 
 function getRiskLabel(bacGL: number) {
   if (bacGL <= 0) return { label: "Sin alcohol estimado", className: "ok" };
-  if (bacGL < 0.3) return { label: "Bajo, pero ya puede afectar reflejos", className: "low" };
+  if (bacGL < 0.3)
+    return { label: "Bajo, pero ya puede afectar reflejos", className: "low" };
   if (bacGL < 0.8) return { label: "Alteracion clara", className: "warn" };
   if (bacGL < 1.5) return { label: "Riesgo alto", className: "danger" };
   return { label: "Riesgo muy alto", className: "critical" };
@@ -186,7 +189,7 @@ function Field({
 
 function App() {
   const [body, setBody] = useState<BodyState>({
-    coefficientId: "average-male",
+    coefficientId: SELECT_PLACEHOLDER_VALUE,
     weightKg: 75,
     hours: 1,
   });
@@ -194,10 +197,17 @@ function App() {
   const [intakes, setIntakes] = useState<Intake[]>([initialIntake(1)]);
 
   const result = useMemo(() => {
-    const totalEthanolGrams = intakes.reduce((sum, intake) => sum + ethanolFromIntake(intake), 0);
+    const totalEthanolGrams = intakes.reduce(
+      (sum, intake) => sum + ethanolFromIntake(intake),
+      0,
+    );
     const coefficient = getSelectedCoefficient(body);
-    const distributionLiters = Math.max(0, coefficient.r * body.weightKg);
-    const rawBacGL = distributionLiters > 0 ? totalEthanolGrams / distributionLiters : 0;
+    const distributionLiters = Math.max(
+      0,
+      (coefficient?.r ?? 0) * body.weightKg,
+    );
+    const rawBacGL =
+      distributionLiters > 0 ? totalEthanolGrams / distributionLiters : 0;
     const eliminatedGL = Math.max(0, body.hours) * ELIMINATION_RATE_GL_PER_HOUR;
     const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
     const bacPercent = currentBacGL / 10;
@@ -217,17 +227,28 @@ function App() {
 
   const risk = getRiskLabel(result.currentBacGL);
 
-  const updateBody = <K extends keyof BodyState>(key: K, value: BodyState[K]) => {
+  const updateBody = <K extends keyof BodyState>(
+    key: K,
+    value: BodyState[K],
+  ) => {
     setBody((current) => ({ ...current, [key]: value }));
   };
 
-  const updateIntake = <K extends keyof Intake>(id: number, key: K, value: Intake[K]) => {
+  const updateIntake = <K extends keyof Intake>(
+    id: number,
+    key: K,
+    value: Intake[K],
+  ) => {
     setIntakes((current) =>
       current.map((intake) => {
         if (intake.id !== id) return intake;
         const next = { ...intake, [key]: value };
 
         if (key === "name") {
+          if (value === SELECT_PLACEHOLDER_VALUE) {
+            return { ...next, abv: 0 };
+          }
+
           const preset = DRINKS.find((drink) => drink.label === value);
           return { ...next, abv: preset?.abv ?? next.abv };
         }
@@ -252,14 +273,13 @@ function App() {
           <p className="eyebrow">Calculadora orientativa</p>
           <h1>Alcoholemia en sangre</h1>
           <p>
-            Carga vasos, tragos mezclados o gramos de etanol. La app estima etanol total,
-            distribucion corporal y desgaste por tiempo.
+            Carga vasos, tragos mezclados o gramos de etanol. La app estima
+            etanol total, distribucion corporal y desgaste por tiempo.
           </p>
         </div>
         <div className="result-panel" aria-live="polite">
           <span className={`status ${risk.className}`}>{risk.label}</span>
           <strong>{formatNumber(result.currentBacGL, 3)} g/L</strong>
-          <span>{formatNumber(result.bacPercent, 3)} % BAC</span>
         </div>
       </section>
 
@@ -267,10 +287,13 @@ function App() {
         <article className="panel inputs-panel">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Paso 1</p>
               <h2>Consumo</h2>
             </div>
-            <button className="secondary-button" type="button" onClick={addIntake}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={addIntake}
+            >
               + Agregar bebida
             </button>
           </div>
@@ -281,13 +304,21 @@ function App() {
                 <div className="intake-header">
                   <strong>Bebida {index + 1}</strong>
                   {intakes.length > 1 && (
-                    <button type="button" className="ghost-button" onClick={() => removeIntake(intake.id)}>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => removeIntake(intake.id)}
+                    >
                       Quitar
                     </button>
                   )}
                 </div>
 
-                <div className="segmented" role="group" aria-label={`Modo de carga bebida ${index + 1}`}>
+                <div
+                  className="segmented"
+                  role="group"
+                  aria-label={`Modo de carga bebida ${index + 1}`}
+                >
                   {[
                     ["cup", "Vaso"],
                     ["mix", "Trago"],
@@ -297,7 +328,9 @@ function App() {
                       className={intake.mode === mode ? "active" : ""}
                       key={mode}
                       type="button"
-                      onClick={() => updateIntake(intake.id, "mode", mode as IntakeMode)}
+                      onClick={() =>
+                        updateIntake(intake.id, "mode", mode as IntakeMode)
+                      }
                     >
                       {label}
                     </button>
@@ -309,8 +342,13 @@ function App() {
                     <Field label="Bebida alcoholica">
                       <select
                         value={intake.name}
-                        onChange={(event) => updateIntake(intake.id, "name", event.target.value)}
+                        onChange={(event) =>
+                          updateIntake(intake.id, "name", event.target.value)
+                        }
                       >
+                        <option value={SELECT_PLACEHOLDER_VALUE}>
+                          Seleccionar
+                        </option>
                         {DRINKS.map((drink) => (
                           <option value={drink.label} key={drink.label}>
                             {drink.label}
@@ -327,7 +365,13 @@ function App() {
                           step="0.1"
                           type="number"
                           value={intake.abv}
-                          onChange={(event) => updateIntake(intake.id, "abv", Number(event.target.value))}
+                          onChange={(event) =>
+                            updateIntake(
+                              intake.id,
+                              "abv",
+                              Number(event.target.value),
+                            )
+                          }
                         />
                         <span>%</span>
                       </div>
@@ -335,12 +379,19 @@ function App() {
 
                     <Field label="Medida del vaso">
                       <select
-                        value={CUP_SIZES.some((cup) => cup.ml === intake.cupMl) ? intake.cupMl : 0}
+                        value={
+                          CUP_SIZES.some((cup) => cup.ml === intake.cupMl)
+                            ? intake.cupMl
+                            : SELECT_PLACEHOLDER_VALUE
+                        }
                         onChange={(event) => {
                           const ml = Number(event.target.value);
-                          if (ml > 0) updateIntake(intake.id, "cupMl", ml);
+                          updateIntake(intake.id, "cupMl", ml);
                         }}
                       >
+                        <option value={SELECT_PLACEHOLDER_VALUE}>
+                          Seleccionar
+                        </option>
                         {CUP_SIZES.map((cup) => (
                           <option value={cup.ml} key={cup.label}>
                             {cup.label} {cup.ml ? `(${cup.ml} ml)` : ""}
@@ -355,7 +406,13 @@ function App() {
                           min="0"
                           type="number"
                           value={intake.cupMl}
-                          onChange={(event) => updateIntake(intake.id, "cupMl", Number(event.target.value))}
+                          onChange={(event) =>
+                            updateIntake(
+                              intake.id,
+                              "cupMl",
+                              Number(event.target.value),
+                            )
+                          }
                         />
                         <span>ml</span>
                       </div>
@@ -368,7 +425,13 @@ function App() {
                           max="100"
                           type="number"
                           value={intake.fillPercent}
-                          onChange={(event) => updateIntake(intake.id, "fillPercent", Number(event.target.value))}
+                          onChange={(event) =>
+                            updateIntake(
+                              intake.id,
+                              "fillPercent",
+                              Number(event.target.value),
+                            )
+                          }
                         />
                         <span>%</span>
                       </div>
@@ -380,7 +443,13 @@ function App() {
                         step="0.5"
                         type="number"
                         value={intake.quantity}
-                        onChange={(event) => updateIntake(intake.id, "quantity", Number(event.target.value))}
+                        onChange={(event) =>
+                          updateIntake(
+                            intake.id,
+                            "quantity",
+                            Number(event.target.value),
+                          )
+                        }
                       />
                     </Field>
 
@@ -396,7 +465,11 @@ function App() {
                             type="number"
                             value={intake.alcoholPartPercent}
                             onChange={(event) =>
-                              updateIntake(intake.id, "alcoholPartPercent", Number(event.target.value))
+                              updateIntake(
+                                intake.id,
+                                "alcoholPartPercent",
+                                Number(event.target.value),
+                              )
                             }
                           />
                           <span>%</span>
@@ -415,7 +488,13 @@ function App() {
                           step="0.1"
                           type="number"
                           value={intake.grams}
-                          onChange={(event) => updateIntake(intake.id, "grams", Number(event.target.value))}
+                          onChange={(event) =>
+                            updateIntake(
+                              intake.id,
+                              "grams",
+                              Number(event.target.value),
+                            )
+                          }
                         />
                         <span>g</span>
                       </div>
@@ -426,14 +505,23 @@ function App() {
                         step="0.5"
                         type="number"
                         value={intake.quantity}
-                        onChange={(event) => updateIntake(intake.id, "quantity", Number(event.target.value))}
+                        onChange={(event) =>
+                          updateIntake(
+                            intake.id,
+                            "quantity",
+                            Number(event.target.value),
+                          )
+                        }
                       />
                     </Field>
                   </div>
                 )}
 
                 <p className="mini-result">
-                  Etanol estimado: <strong>{formatNumber(ethanolFromIntake(intake), 1)} g</strong>
+                  Etanol estimado:{" "}
+                  <strong>
+                    {formatNumber(ethanolFromIntake(intake), 1)} g
+                  </strong>
                 </p>
               </div>
             ))}
@@ -443,7 +531,6 @@ function App() {
         <aside className="panel">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Paso 2</p>
               <h2>Persona y tiempo</h2>
             </div>
           </div>
@@ -452,11 +539,15 @@ function App() {
             <Field label="Tipo de cuerpo / sexo biologico">
               <select
                 value={body.coefficientId}
-                onChange={(event) => updateBody("coefficientId", event.target.value)}
+                onChange={(event) =>
+                  updateBody("coefficientId", event.target.value)
+                }
               >
+                <option value={SELECT_PLACEHOLDER_VALUE}>Seleccionar</option>
                 {BODY_COEFFICIENTS.map((coefficient) => (
                   <option value={coefficient.id} key={coefficient.id}>
-                    {coefficient.bodyType} - {coefficient.sex} (r {coefficient.r.toFixed(2)})
+                    {coefficient.bodyType} - {coefficient.sex} (r{" "}
+                    {coefficient.r.toFixed(2)})
                   </option>
                 ))}
               </select>
@@ -464,11 +555,13 @@ function App() {
 
             <div className="coefficient-card">
               <span>Coeficiente elegido</span>
-              <strong>r = {result.coefficient.r.toFixed(2)}</strong>
-              <p>
-                {result.coefficient.bodyType}: {result.coefficient.description}.{" "}
-                {result.coefficient.sex}.
-              </p>
+              <strong>r = {result.coefficient?.r.toFixed(2) ?? "0.00"}</strong>
+              {result.coefficient && (
+                <p>
+                  {result.coefficient.bodyType}:{" "}
+                  {result.coefficient.description}. {result.coefficient.sex}.
+                </p>
+              )}
             </div>
 
             <Field label="Peso">
@@ -477,7 +570,9 @@ function App() {
                   min="1"
                   type="number"
                   value={body.weightKg}
-                  onChange={(event) => updateBody("weightKg", Number(event.target.value))}
+                  onChange={(event) =>
+                    updateBody("weightKg", Number(event.target.value))
+                  }
                 />
                 <span>kg</span>
               </div>
@@ -490,7 +585,9 @@ function App() {
                   step="0.25"
                   type="number"
                   value={body.hours}
-                  onChange={(event) => updateBody("hours", Number(event.target.value))}
+                  onChange={(event) =>
+                    updateBody("hours", Number(event.target.value))
+                  }
                 />
                 <span>h</span>
               </div>
@@ -521,14 +618,15 @@ function App() {
       <section className="formula-panel">
         <h2>Formula usada</h2>
         <p>
-          Etanol = ml de bebida x graduacion x 0.789. Alcoholemia inicial = gramos de etanol /
-          (peso corporal x coeficiente r). Resultado final = alcoholemia inicial - horas x
-          0.15 g/L.
+          Etanol = ml de bebida x graduacion x 0.789. Alcoholemia inicial =
+          gramos de etanol / (peso corporal x coeficiente r). Resultado final =
+          alcoholemia inicial - horas x 0.15 g/L.
         </p>
         <p>
-          Los valores de r disponibles son los de la tabla por tipo corporal y sexo biologico. Es
-          una herramienta educativa: comida, medicamentos, metabolismo, salud, ritmo de consumo y
-          mediciones reales pueden cambiar el resultado. No sirve para decidir si una persona puede
+          Los valores de r disponibles son los de la tabla por tipo corporal y
+          sexo biologico. Es una herramienta educativa: comida, medicamentos,
+          metabolismo, salud, ritmo de consumo y mediciones reales pueden
+          cambiar el resultado. No sirve para decidir si una persona puede
           conducir.
         </p>
       </section>
