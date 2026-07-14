@@ -27,18 +27,19 @@ const CUP_SIZES = [
 ];
 
 type IntakeMode = "cup" | "mix" | "grams";
+type NumericInput = number | "";
 
 type Intake = {
   id: number;
   mode: IntakeMode;
   name: string;
-  quantity: number;
-  cupMl: number;
-  abv: number;
-  fillPercent: number;
-  alcoholPartPercent: number;
-  grams: number;
-  hoursAgo: number;
+  quantity: NumericInput;
+  cupMl: NumericInput;
+  abv: NumericInput;
+  fillPercent: NumericInput;
+  alcoholPartPercent: NumericInput;
+  grams: NumericInput;
+  hoursAgo: NumericInput;
 };
 
 type BodyCoefficient = {
@@ -51,7 +52,7 @@ type BodyCoefficient = {
 
 type BodyState = {
   coefficientId: string;
-  weightKg: number;
+  weightKg: NumericInput;
 };
 
 const BODY_COEFFICIENTS: BodyCoefficient[] = [
@@ -129,27 +130,31 @@ const initialIntake = (id = Date.now()): Intake => ({
 const formatNumber = (value: number, decimals = 2) =>
   Number.isFinite(value) ? value.toFixed(decimals) : "0.00";
 
+const parseNumericInput = (value: string): NumericInput => (value === "" ? "" : Number(value));
+
+const numericValue = (value: NumericInput) => (value === "" ? 0 : value);
+
 function ethanolFromIntake(intake: Intake) {
   if (intake.mode === "grams") {
-    return Math.max(0, intake.grams) * Math.max(0, intake.quantity);
+    return Math.max(0, numericValue(intake.grams)) * Math.max(0, numericValue(intake.quantity));
   }
 
   if (intake.mode === "mix") {
     const alcoholicMl =
-      Math.max(0, intake.cupMl) *
-      (Math.max(0, intake.fillPercent) / 100) *
-      (Math.max(0, intake.alcoholPartPercent) / 100) *
-      Math.max(0, intake.quantity);
+      Math.max(0, numericValue(intake.cupMl)) *
+      (Math.max(0, numericValue(intake.fillPercent)) / 100) *
+      (Math.max(0, numericValue(intake.alcoholPartPercent)) / 100) *
+      Math.max(0, numericValue(intake.quantity));
 
-    return alcoholicMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML;
+    return alcoholicMl * (Math.max(0, numericValue(intake.abv)) / 100) * ETHANOL_DENSITY_G_PER_ML;
   }
 
   const drinkMl =
-    Math.max(0, intake.cupMl) *
-    (Math.max(0, intake.fillPercent) / 100) *
-    Math.max(0, intake.quantity);
+    Math.max(0, numericValue(intake.cupMl)) *
+    (Math.max(0, numericValue(intake.fillPercent)) / 100) *
+    Math.max(0, numericValue(intake.quantity));
 
-  return drinkMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML;
+  return drinkMl * (Math.max(0, numericValue(intake.abv)) / 100) * ETHANOL_DENSITY_G_PER_ML;
 }
 
 function getSelectedCoefficient(body: BodyState) {
@@ -170,7 +175,10 @@ function getRiskLabel(bacGL: number) {
 function bacContributionFromIntake(intake: Intake, distributionLiters: number) {
   const ethanolGrams = ethanolFromIntake(intake);
   const rawBacGL = distributionLiters > 0 ? ethanolGrams / distributionLiters : 0;
-  const eliminatedGL = Math.min(rawBacGL, Math.max(0, intake.hoursAgo) * ELIMINATION_RATE_GL_PER_HOUR);
+  const eliminatedGL = Math.min(
+    rawBacGL,
+    Math.max(0, numericValue(intake.hoursAgo)) * ELIMINATION_RATE_GL_PER_HOUR,
+  );
   const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
 
   return {
@@ -209,7 +217,7 @@ function App() {
 
   const result = useMemo(() => {
     const coefficient = getSelectedCoefficient(body);
-    const distributionLiters = Math.max(0, coefficient.r * body.weightKg);
+    const distributionLiters = Math.max(0, coefficient.r * numericValue(body.weightKg));
     const contributions = intakes.map((intake) => bacContributionFromIntake(intake, distributionLiters));
     const totalEthanolGrams = contributions.reduce((sum, contribution) => sum + contribution.ethanolGrams, 0);
     const rawBacGL = contributions.reduce((sum, contribution) => sum + contribution.rawBacGL, 0);
@@ -342,7 +350,7 @@ function App() {
                           step="0.1"
                           type="number"
                           value={intake.abv}
-                          onChange={(event) => updateIntake(intake.id, "abv", Number(event.target.value))}
+                          onChange={(event) => updateIntake(intake.id, "abv", parseNumericInput(event.target.value))}
                         />
                         <span>%</span>
                       </div>
@@ -350,7 +358,11 @@ function App() {
 
                     <Field label="Medida del vaso">
                       <select
-                        value={CUP_SIZES.some((cup) => cup.ml === intake.cupMl) ? intake.cupMl : 0}
+                        value={
+                          CUP_SIZES.some((cup) => cup.ml === numericValue(intake.cupMl))
+                            ? numericValue(intake.cupMl)
+                            : 0
+                        }
                         onChange={(event) => {
                           const ml = Number(event.target.value);
                           if (ml > 0) updateIntake(intake.id, "cupMl", ml);
@@ -370,7 +382,7 @@ function App() {
                           min="0"
                           type="number"
                           value={intake.cupMl}
-                          onChange={(event) => updateIntake(intake.id, "cupMl", Number(event.target.value))}
+                          onChange={(event) => updateIntake(intake.id, "cupMl", parseNumericInput(event.target.value))}
                         />
                         <span>ml</span>
                       </div>
@@ -383,7 +395,9 @@ function App() {
                           max="100"
                           type="number"
                           value={intake.fillPercent}
-                          onChange={(event) => updateIntake(intake.id, "fillPercent", Number(event.target.value))}
+                          onChange={(event) =>
+                            updateIntake(intake.id, "fillPercent", parseNumericInput(event.target.value))
+                          }
                         />
                         <span>%</span>
                       </div>
@@ -395,7 +409,7 @@ function App() {
                         step="0.5"
                         type="number"
                         value={intake.quantity}
-                        onChange={(event) => updateIntake(intake.id, "quantity", Number(event.target.value))}
+                        onChange={(event) => updateIntake(intake.id, "quantity", parseNumericInput(event.target.value))}
                       />
                     </Field>
 
@@ -406,7 +420,7 @@ function App() {
                           step="0.25"
                           type="number"
                           value={intake.hoursAgo}
-                          onChange={(event) => updateIntake(intake.id, "hoursAgo", Number(event.target.value))}
+                          onChange={(event) => updateIntake(intake.id, "hoursAgo", parseNumericInput(event.target.value))}
                         />
                         <span>h</span>
                       </div>
@@ -424,7 +438,11 @@ function App() {
                             type="number"
                             value={intake.alcoholPartPercent}
                             onChange={(event) =>
-                              updateIntake(intake.id, "alcoholPartPercent", Number(event.target.value))
+                              updateIntake(
+                                intake.id,
+                                "alcoholPartPercent",
+                                parseNumericInput(event.target.value),
+                              )
                             }
                           />
                           <span>%</span>
@@ -443,7 +461,7 @@ function App() {
                           step="0.1"
                           type="number"
                           value={intake.grams}
-                          onChange={(event) => updateIntake(intake.id, "grams", Number(event.target.value))}
+                          onChange={(event) => updateIntake(intake.id, "grams", parseNumericInput(event.target.value))}
                         />
                         <span>g</span>
                       </div>
@@ -454,7 +472,7 @@ function App() {
                         step="0.5"
                         type="number"
                         value={intake.quantity}
-                        onChange={(event) => updateIntake(intake.id, "quantity", Number(event.target.value))}
+                        onChange={(event) => updateIntake(intake.id, "quantity", parseNumericInput(event.target.value))}
                       />
                     </Field>
                     <Field label="Tiempo desde esta carga" hint="Ejemplo: 1 = hace una hora, 0.5 = media hora">
@@ -464,7 +482,7 @@ function App() {
                           step="0.25"
                           type="number"
                           value={intake.hoursAgo}
-                          onChange={(event) => updateIntake(intake.id, "hoursAgo", Number(event.target.value))}
+                          onChange={(event) => updateIntake(intake.id, "hoursAgo", parseNumericInput(event.target.value))}
                         />
                         <span>h</span>
                       </div>
@@ -517,7 +535,7 @@ function App() {
                   min="1"
                   type="number"
                   value={body.weightKg}
-                  onChange={(event) => updateBody("weightKg", Number(event.target.value))}
+                  onChange={(event) => updateBody("weightKg", parseNumericInput(event.target.value))}
                 />
                 <span>kg</span>
               </div>
