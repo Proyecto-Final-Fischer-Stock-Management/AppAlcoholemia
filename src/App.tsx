@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 const ETHANOL_DENSITY_G_PER_ML = 0.789;
+const ELIMINATION_RATE_GL_PER_HOUR = 0.15;
 
 const DRINKS = [
   { label: "Cerveza", abv: 5 },
@@ -12,7 +13,7 @@ const DRINKS = [
   { label: "Ron", abv: 40 },
   { label: "Whisky", abv: 40 },
   { label: "Licor fuerte", abv: 35 },
-  { label: "Personalizada", abv: 0 },
+  { label: "Otra bebida", abv: 0 },
 ];
 
 const CUP_SIZES = [
@@ -22,12 +23,10 @@ const CUP_SIZES = [
   { label: "Vaso fiesta", ml: 300 },
   { label: "Pinta / vaso grande", ml: 500 },
   { label: "Lata grande", ml: 473 },
-  { label: "Personalizado", ml: 0 },
+  { label: "Medida manual", ml: 0 },
 ];
 
 type IntakeMode = "cup" | "mix" | "grams";
-type BodyMode = "widmark" | "watson";
-type Sex = "male" | "female" | "neutral" | "custom";
 
 type Intake = {
   id: number;
@@ -41,23 +40,78 @@ type Intake = {
   grams: number;
 };
 
-type BodyState = {
-  mode: BodyMode;
-  sex: Sex;
-  customR: number;
-  weightKg: number;
-  heightCm: number;
-  age: number;
-  hours: number;
-  eliminationRate: number;
+type BodyCoefficient = {
+  id: string;
+  bodyType: string;
+  description: string;
+  sex: "Masculino" | "Femenino";
+  r: number;
 };
 
-const rBySex: Record<Sex, number> = {
-  male: 0.68,
-  female: 0.55,
-  neutral: 0.61,
-  custom: 0.61,
+type BodyState = {
+  coefficientId: string;
+  weightKg: number;
+  hours: number;
 };
+
+const BODY_COEFFICIENTS: BodyCoefficient[] = [
+  {
+    id: "asthenic-male",
+    bodyType: "Astenico",
+    description: "Cuerpos delgados, altos, torax estrecho",
+    sex: "Masculino",
+    r: 0.85,
+  },
+  {
+    id: "asthenic-female",
+    bodyType: "Astenico",
+    description: "Cuerpos delgados, altos, torax estrecho",
+    sex: "Femenino",
+    r: 0.76,
+  },
+  {
+    id: "athletic-male",
+    bodyType: "Atletico",
+    description: "Cuerpos con fuerte musculatura",
+    sex: "Masculino",
+    r: 0.76,
+  },
+  {
+    id: "athletic-female",
+    bodyType: "Atletico",
+    description: "Cuerpos con fuerte musculatura",
+    sex: "Femenino",
+    r: 0.67,
+  },
+  {
+    id: "pyknic-male",
+    bodyType: "Picnico",
+    description: "Cuerpos redondeados y robustos, de baja estatura",
+    sex: "Masculino",
+    r: 0.64,
+  },
+  {
+    id: "pyknic-female",
+    bodyType: "Picnico",
+    description: "Cuerpos redondeados y robustos, de baja estatura",
+    sex: "Femenino",
+    r: 0.58,
+  },
+  {
+    id: "average-male",
+    bodyType: "Valor promedio",
+    description: "Promedio masculino",
+    sex: "Masculino",
+    r: 0.75,
+  },
+  {
+    id: "average-female",
+    bodyType: "Valor promedio",
+    description: "Promedio femenino",
+    sex: "Femenino",
+    r: 0.67,
+  },
+];
 
 const initialIntake = (id = Date.now()): Intake => ({
   id,
@@ -97,25 +151,11 @@ function ethanolFromIntake(intake: Intake) {
   return drinkMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML;
 }
 
-function calculateWatsonTotalBodyWaterLiters(body: BodyState) {
-  if (body.weightKg <= 0 || body.heightCm <= 0 || body.age <= 0) {
-    return 0;
-  }
-
-  if (body.sex === "female") {
-    return -2.097 + 0.1069 * body.heightCm + 0.2466 * body.weightKg;
-  }
-
-  return 2.447 - 0.09516 * body.age + 0.1074 * body.heightCm + 0.3362 * body.weightKg;
-}
-
-function getBodyWaterLiters(body: BodyState) {
-  if (body.mode === "watson") {
-    return Math.max(0, calculateWatsonTotalBodyWaterLiters(body));
-  }
-
-  const coefficient = body.sex === "custom" ? body.customR : rBySex[body.sex];
-  return Math.max(0, coefficient * body.weightKg);
+function getSelectedCoefficient(body: BodyState) {
+  return (
+    BODY_COEFFICIENTS.find((coefficient) => coefficient.id === body.coefficientId) ??
+    BODY_COEFFICIENTS[0]
+  );
 }
 
 function getRiskLabel(bacGL: number) {
@@ -146,30 +186,27 @@ function Field({
 
 function App() {
   const [body, setBody] = useState<BodyState>({
-    mode: "widmark",
-    sex: "male",
-    customR: 0.61,
+    coefficientId: "average-male",
     weightKg: 75,
-    heightCm: 175,
-    age: 25,
     hours: 1,
-    eliminationRate: 0.15,
   });
 
   const [intakes, setIntakes] = useState<Intake[]>([initialIntake(1)]);
 
   const result = useMemo(() => {
     const totalEthanolGrams = intakes.reduce((sum, intake) => sum + ethanolFromIntake(intake), 0);
-    const bodyWaterLiters = getBodyWaterLiters(body);
-    const rawBacGL = bodyWaterLiters > 0 ? totalEthanolGrams / bodyWaterLiters : 0;
-    const eliminatedGL = Math.max(0, body.hours) * Math.max(0, body.eliminationRate);
+    const coefficient = getSelectedCoefficient(body);
+    const distributionLiters = Math.max(0, coefficient.r * body.weightKg);
+    const rawBacGL = distributionLiters > 0 ? totalEthanolGrams / distributionLiters : 0;
+    const eliminatedGL = Math.max(0, body.hours) * ELIMINATION_RATE_GL_PER_HOUR;
     const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
     const bacPercent = currentBacGL / 10;
     const standardDrinks = totalEthanolGrams / 14;
 
     return {
       totalEthanolGrams,
-      bodyWaterLiters,
+      coefficient,
+      distributionLiters,
       rawBacGL,
       eliminatedGL,
       currentBacGL,
@@ -411,45 +448,28 @@ function App() {
             </div>
           </div>
 
-          <div className="segmented wide" role="group" aria-label="Metodo de composicion corporal">
-            <button
-              className={body.mode === "widmark" ? "active" : ""}
-              type="button"
-              onClick={() => updateBody("mode", "widmark")}
-            >
-              Coeficiente
-            </button>
-            <button
-              className={body.mode === "watson" ? "active" : ""}
-              type="button"
-              onClick={() => updateBody("mode", "watson")}
-            >
-              Peso + altura
-            </button>
-          </div>
-
           <div className="form-grid single">
-            <Field label="Sexo / composicion">
-              <select value={body.sex} onChange={(event) => updateBody("sex", event.target.value as Sex)}>
-                <option value="male">Hombre biologico (r 0.68)</option>
-                <option value="female">Mujer biologica (r 0.55)</option>
-                <option value="neutral">Intermedio (r 0.61)</option>
-                <option value="custom">Personalizado</option>
+            <Field label="Tipo de cuerpo / sexo biologico">
+              <select
+                value={body.coefficientId}
+                onChange={(event) => updateBody("coefficientId", event.target.value)}
+              >
+                {BODY_COEFFICIENTS.map((coefficient) => (
+                  <option value={coefficient.id} key={coefficient.id}>
+                    {coefficient.bodyType} - {coefficient.sex} (r {coefficient.r.toFixed(2)})
+                  </option>
+                ))}
               </select>
             </Field>
 
-            {body.mode === "widmark" && body.sex === "custom" && (
-              <Field label="Coeficiente r personalizado" hint="Valores habituales: 0.55 a 0.68">
-                <input
-                  min="0.4"
-                  max="0.8"
-                  step="0.01"
-                  type="number"
-                  value={body.customR}
-                  onChange={(event) => updateBody("customR", Number(event.target.value))}
-                />
-              </Field>
-            )}
+            <div className="coefficient-card">
+              <span>Coeficiente elegido</span>
+              <strong>r = {result.coefficient.r.toFixed(2)}</strong>
+              <p>
+                {result.coefficient.bodyType}: {result.coefficient.description}.{" "}
+                {result.coefficient.sex}.
+              </p>
+            </div>
 
             <Field label="Peso">
               <div className="input-suffix">
@@ -463,30 +483,6 @@ function App() {
               </div>
             </Field>
 
-            {body.mode === "watson" && (
-              <>
-                <Field label="Altura">
-                  <div className="input-suffix">
-                    <input
-                      min="1"
-                      type="number"
-                      value={body.heightCm}
-                      onChange={(event) => updateBody("heightCm", Number(event.target.value))}
-                    />
-                    <span>cm</span>
-                  </div>
-                </Field>
-                <Field label="Edad">
-                  <input
-                    min="1"
-                    type="number"
-                    value={body.age}
-                    onChange={(event) => updateBody("age", Number(event.target.value))}
-                  />
-                </Field>
-              </>
-            )}
-
             <Field label="Tiempo desde que empezo a beber">
               <div className="input-suffix">
                 <input
@@ -497,23 +493,6 @@ function App() {
                   onChange={(event) => updateBody("hours", Number(event.target.value))}
                 />
                 <span>h</span>
-              </div>
-            </Field>
-
-            <Field
-              label="Desgaste por hora"
-              hint="Promedio usado: 0.15 g/L por hora. Puede variar mucho entre personas."
-            >
-              <div className="input-suffix">
-                <input
-                  min="0"
-                  max="0.3"
-                  step="0.01"
-                  type="number"
-                  value={body.eliminationRate}
-                  onChange={(event) => updateBody("eliminationRate", Number(event.target.value))}
-                />
-                <span>g/L/h</span>
               </div>
             </Field>
           </div>
@@ -543,13 +522,14 @@ function App() {
         <h2>Formula usada</h2>
         <p>
           Etanol = ml de bebida x graduacion x 0.789. Alcoholemia inicial = gramos de etanol /
-          litros de agua corporal. Resultado final = alcoholemia inicial - horas x desgaste.
+          (peso corporal x coeficiente r). Resultado final = alcoholemia inicial - horas x
+          0.15 g/L.
         </p>
         <p>
-          La estimacion por coeficiente usa r de Widmark. La opcion de peso + altura estima agua
-          corporal con Watson. Es una herramienta educativa: comida, medicamentos, metabolismo,
-          salud, ritmo de consumo y mediciones reales pueden cambiar el resultado. No sirve para
-          decidir si una persona puede conducir.
+          Los valores de r disponibles son los de la tabla por tipo corporal y sexo biologico. Es
+          una herramienta educativa: comida, medicamentos, metabolismo, salud, ritmo de consumo y
+          mediciones reales pueden cambiar el resultado. No sirve para decidir si una persona puede
+          conducir.
         </p>
       </section>
     </main>

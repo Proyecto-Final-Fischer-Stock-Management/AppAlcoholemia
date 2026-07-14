@@ -259,6 +259,34 @@ button {
   margin-top: 0;
 }
 
+.coefficient-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  background: #eef7f4;
+  border: 1px solid #b9d9d1;
+  border-radius: 8px;
+}
+
+.coefficient-card span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.coefficient-card strong {
+  color: var(--green);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.coefficient-card p {
+  margin: 0;
+  color: #3f4a46;
+  line-height: 1.4;
+}
+
 .field {
   display: grid;
   gap: 7px;
