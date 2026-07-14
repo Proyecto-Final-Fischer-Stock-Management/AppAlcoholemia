@@ -21,7 +21,7 @@ npm run build
 - Graduacion alcoholica de cada bebida.
 - Proporcion alcoholica de tragos, por ejemplo fernet 70/30.
 - Distribucion corporal por coeficiente `r` segun tipo de cuerpo/sexo biologico y peso.
-- Desgaste del alcohol segun horas transcurridas, usando `0.15 g/L` por hora.
+- Desgaste del alcohol por cada bebida segun sus horas transcurridas, usando `0.15 g/L` por hora.
 
 El resultado principal se muestra en `g/L` y tambien como `% BAC`.
 

@@ -38,6 +38,7 @@ type Intake = {
   fillPercent: number;
   alcoholPartPercent: number;
   grams: number;
+  hoursAgo: number;
 };
 
 type BodyCoefficient = {
@@ -51,7 +52,6 @@ type BodyCoefficient = {
 type BodyState = {
   coefficientId: string;
   weightKg: number;
-  hours: number;
 };
 
 const BODY_COEFFICIENTS: BodyCoefficient[] = [
@@ -123,6 +123,7 @@ const initialIntake = (id = Date.now()): Intake => ({
   fillPercent: 100,
   alcoholPartPercent: 50,
   grams: 14,
+  hoursAgo: 1,
 });
 
 const formatNumber = (value: number, decimals = 2) =>
@@ -166,6 +167,20 @@ function getRiskLabel(bacGL: number) {
   return { label: "Riesgo muy alto", className: "critical" };
 }
 
+function bacContributionFromIntake(intake: Intake, distributionLiters: number) {
+  const ethanolGrams = ethanolFromIntake(intake);
+  const rawBacGL = distributionLiters > 0 ? ethanolGrams / distributionLiters : 0;
+  const eliminatedGL = Math.min(rawBacGL, Math.max(0, intake.hoursAgo) * ELIMINATION_RATE_GL_PER_HOUR);
+  const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
+
+  return {
+    ethanolGrams,
+    rawBacGL,
+    eliminatedGL,
+    currentBacGL,
+  };
+}
+
 function Field({
   label,
   children,
@@ -188,18 +203,18 @@ function App() {
   const [body, setBody] = useState<BodyState>({
     coefficientId: "average-male",
     weightKg: 75,
-    hours: 1,
   });
 
   const [intakes, setIntakes] = useState<Intake[]>([initialIntake(1)]);
 
   const result = useMemo(() => {
-    const totalEthanolGrams = intakes.reduce((sum, intake) => sum + ethanolFromIntake(intake), 0);
     const coefficient = getSelectedCoefficient(body);
     const distributionLiters = Math.max(0, coefficient.r * body.weightKg);
-    const rawBacGL = distributionLiters > 0 ? totalEthanolGrams / distributionLiters : 0;
-    const eliminatedGL = Math.max(0, body.hours) * ELIMINATION_RATE_GL_PER_HOUR;
-    const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
+    const contributions = intakes.map((intake) => bacContributionFromIntake(intake, distributionLiters));
+    const totalEthanolGrams = contributions.reduce((sum, contribution) => sum + contribution.ethanolGrams, 0);
+    const rawBacGL = contributions.reduce((sum, contribution) => sum + contribution.rawBacGL, 0);
+    const eliminatedGL = contributions.reduce((sum, contribution) => sum + contribution.eliminatedGL, 0);
+    const currentBacGL = contributions.reduce((sum, contribution) => sum + contribution.currentBacGL, 0);
     const bacPercent = currentBacGL / 10;
     const standardDrinks = totalEthanolGrams / 14;
 
@@ -253,7 +268,7 @@ function App() {
           <h1>Alcoholemia en sangre</h1>
           <p>
             Carga vasos, tragos mezclados o gramos de etanol. La app estima etanol total,
-            distribucion corporal y desgaste por tiempo.
+            distribucion corporal y desgaste por tiempo de cada bebida.
           </p>
         </div>
         <div className="result-panel" aria-live="polite">
@@ -384,6 +399,19 @@ function App() {
                       />
                     </Field>
 
+                    <Field label="Tiempo desde esta bebida" hint="Ejemplo: 1 = hace una hora, 0.5 = media hora">
+                      <div className="input-suffix">
+                        <input
+                          min="0"
+                          step="0.25"
+                          type="number"
+                          value={intake.hoursAgo}
+                          onChange={(event) => updateIntake(intake.id, "hoursAgo", Number(event.target.value))}
+                        />
+                        <span>h</span>
+                      </div>
+                    </Field>
+
                     {intake.mode === "mix" && (
                       <Field
                         label="Parte alcoholica del trago"
@@ -429,6 +457,18 @@ function App() {
                         onChange={(event) => updateIntake(intake.id, "quantity", Number(event.target.value))}
                       />
                     </Field>
+                    <Field label="Tiempo desde esta carga" hint="Ejemplo: 1 = hace una hora, 0.5 = media hora">
+                      <div className="input-suffix">
+                        <input
+                          min="0"
+                          step="0.25"
+                          type="number"
+                          value={intake.hoursAgo}
+                          onChange={(event) => updateIntake(intake.id, "hoursAgo", Number(event.target.value))}
+                        />
+                        <span>h</span>
+                      </div>
+                    </Field>
                   </div>
                 )}
 
@@ -444,7 +484,7 @@ function App() {
           <div className="section-heading">
             <div>
               <p className="eyebrow">Paso 2</p>
-              <h2>Persona y tiempo</h2>
+              <h2>Persona</h2>
             </div>
           </div>
 
@@ -482,19 +522,6 @@ function App() {
                 <span>kg</span>
               </div>
             </Field>
-
-            <Field label="Tiempo desde que empezo a beber">
-              <div className="input-suffix">
-                <input
-                  min="0"
-                  step="0.25"
-                  type="number"
-                  value={body.hours}
-                  onChange={(event) => updateBody("hours", Number(event.target.value))}
-                />
-                <span>h</span>
-              </div>
-            </Field>
           </div>
         </aside>
       </section>
@@ -522,8 +549,8 @@ function App() {
         <h2>Formula usada</h2>
         <p>
           Etanol = ml de bebida x graduacion x 0.789. Alcoholemia inicial = gramos de etanol /
-          (peso corporal x coeficiente r). Resultado final = alcoholemia inicial - horas x
-          0.15 g/L.
+          (peso corporal x coeficiente r). Para cada bebida se resta el tiempo propio de esa bebida
+          x 0.15 g/L. El resultado final es la suma de lo que queda de cada bebida.
         </p>
         <p>
           Los valores de r disponibles son los de la tabla por tipo corporal y sexo biologico. Es
