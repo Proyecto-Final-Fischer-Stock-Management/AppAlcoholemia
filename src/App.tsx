@@ -28,17 +28,19 @@ const CUP_SIZES = [
 ];
 
 type IntakeMode = "cup" | "mix" | "grams";
+type NumericInput = number | "";
 
 type Intake = {
   id: number;
   mode: IntakeMode;
   name: string;
-  quantity: number;
-  cupMl: number;
-  abv: number;
-  fillPercent: number;
-  alcoholPartPercent: number;
-  grams: number;
+  quantity: NumericInput;
+  cupMl: NumericInput;
+  abv: NumericInput;
+  fillPercent: NumericInput;
+  alcoholPartPercent: NumericInput;
+  grams: NumericInput;
+  hoursAgo: NumericInput;
 };
 
 type BodyCoefficient = {
@@ -51,8 +53,7 @@ type BodyCoefficient = {
 
 type BodyState = {
   coefficientId: string;
-  weightKg: number;
-  hours: number;
+  weightKg: NumericInput;
 };
 
 const BODY_COEFFICIENTS: BodyCoefficient[] = [
@@ -124,34 +125,37 @@ const initialIntake = (id = Date.now()): Intake => ({
   fillPercent: 100,
   alcoholPartPercent: 50,
   grams: 14,
+  hoursAgo: 1,
 });
 
 const formatNumber = (value: number, decimals = 2) =>
   Number.isFinite(value) ? value.toFixed(decimals) : "0.00";
 
+const parseNumericInput = (value: string): NumericInput => (value === "" ? "" : Number(value));
+
+const numericValue = (value: NumericInput) => (value === "" ? 0 : value);
+
 function ethanolFromIntake(intake: Intake) {
   if (intake.mode === "grams") {
-    return Math.max(0, intake.grams) * Math.max(0, intake.quantity);
+    return Math.max(0, numericValue(intake.grams)) * Math.max(0, numericValue(intake.quantity));
   }
 
   if (intake.mode === "mix") {
     const alcoholicMl =
-      Math.max(0, intake.cupMl) *
-      (Math.max(0, intake.fillPercent) / 100) *
-      (Math.max(0, intake.alcoholPartPercent) / 100) *
-      Math.max(0, intake.quantity);
+      Math.max(0, numericValue(intake.cupMl)) *
+      (Math.max(0, numericValue(intake.fillPercent)) / 100) *
+      (Math.max(0, numericValue(intake.alcoholPartPercent)) / 100) *
+      Math.max(0, numericValue(intake.quantity));
 
-    return (
-      alcoholicMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML
-    );
+    return alcoholicMl * (Math.max(0, numericValue(intake.abv)) / 100) * ETHANOL_DENSITY_G_PER_ML;
   }
 
   const drinkMl =
-    Math.max(0, intake.cupMl) *
-    (Math.max(0, intake.fillPercent) / 100) *
-    Math.max(0, intake.quantity);
+    Math.max(0, numericValue(intake.cupMl)) *
+    (Math.max(0, numericValue(intake.fillPercent)) / 100) *
+    Math.max(0, numericValue(intake.quantity));
 
-  return drinkMl * (Math.max(0, intake.abv) / 100) * ETHANOL_DENSITY_G_PER_ML;
+  return drinkMl * (Math.max(0, numericValue(intake.abv)) / 100) * ETHANOL_DENSITY_G_PER_ML;
 }
 
 function getSelectedCoefficient(body: BodyState) {
@@ -167,6 +171,23 @@ function getRiskLabel(bacGL: number) {
   if (bacGL < 0.8) return { label: "Alteracion clara", className: "warn" };
   if (bacGL < 1.5) return { label: "Riesgo alto", className: "danger" };
   return { label: "Riesgo muy alto", className: "critical" };
+}
+
+function bacContributionFromIntake(intake: Intake, distributionLiters: number) {
+  const ethanolGrams = ethanolFromIntake(intake);
+  const rawBacGL = distributionLiters > 0 ? ethanolGrams / distributionLiters : 0;
+  const eliminatedGL = Math.min(
+    rawBacGL,
+    Math.max(0, numericValue(intake.hoursAgo)) * ELIMINATION_RATE_GL_PER_HOUR,
+  );
+  const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
+
+  return {
+    ethanolGrams,
+    rawBacGL,
+    eliminatedGL,
+    currentBacGL,
+  };
 }
 
 function Field({
@@ -191,25 +212,18 @@ function App() {
   const [body, setBody] = useState<BodyState>({
     coefficientId: SELECT_PLACEHOLDER_VALUE,
     weightKg: 75,
-    hours: 1,
   });
 
   const [intakes, setIntakes] = useState<Intake[]>([initialIntake(1)]);
 
   const result = useMemo(() => {
-    const totalEthanolGrams = intakes.reduce(
-      (sum, intake) => sum + ethanolFromIntake(intake),
-      0,
-    );
     const coefficient = getSelectedCoefficient(body);
-    const distributionLiters = Math.max(
-      0,
-      (coefficient?.r ?? 0) * body.weightKg,
-    );
-    const rawBacGL =
-      distributionLiters > 0 ? totalEthanolGrams / distributionLiters : 0;
-    const eliminatedGL = Math.max(0, body.hours) * ELIMINATION_RATE_GL_PER_HOUR;
-    const currentBacGL = Math.max(0, rawBacGL - eliminatedGL);
+    const distributionLiters = Math.max(0, coefficient.r * numericValue(body.weightKg));
+    const contributions = intakes.map((intake) => bacContributionFromIntake(intake, distributionLiters));
+    const totalEthanolGrams = contributions.reduce((sum, contribution) => sum + contribution.ethanolGrams, 0);
+    const rawBacGL = contributions.reduce((sum, contribution) => sum + contribution.rawBacGL, 0);
+    const eliminatedGL = contributions.reduce((sum, contribution) => sum + contribution.eliminatedGL, 0);
+    const currentBacGL = contributions.reduce((sum, contribution) => sum + contribution.currentBacGL, 0);
     const bacPercent = currentBacGL / 10;
     const standardDrinks = totalEthanolGrams / 14;
 
@@ -273,8 +287,8 @@ function App() {
           <p className="eyebrow">Calculadora orientativa</p>
           <h1>Alcoholemia en sangre</h1>
           <p>
-            Carga vasos, tragos mezclados o gramos de etanol. La app estima
-            etanol total, distribucion corporal y desgaste por tiempo.
+            Carga vasos, tragos mezclados o gramos de etanol. La app estima etanol total,
+            distribucion corporal y desgaste por tiempo de cada bebida.
           </p>
         </div>
         <div className="result-panel" aria-live="polite">
@@ -365,13 +379,7 @@ function App() {
                           step="0.1"
                           type="number"
                           value={intake.abv}
-                          onChange={(event) =>
-                            updateIntake(
-                              intake.id,
-                              "abv",
-                              Number(event.target.value),
-                            )
-                          }
+                          onChange={(event) => updateIntake(intake.id, "abv", parseNumericInput(event.target.value))}
                         />
                         <span>%</span>
                       </div>
@@ -380,9 +388,9 @@ function App() {
                     <Field label="Medida del vaso">
                       <select
                         value={
-                          CUP_SIZES.some((cup) => cup.ml === intake.cupMl)
-                            ? intake.cupMl
-                            : SELECT_PLACEHOLDER_VALUE
+                          CUP_SIZES.some((cup) => cup.ml === numericValue(intake.cupMl))
+                            ? numericValue(intake.cupMl)
+                            : 0
                         }
                         onChange={(event) => {
                           const ml = Number(event.target.value);
@@ -406,13 +414,7 @@ function App() {
                           min="0"
                           type="number"
                           value={intake.cupMl}
-                          onChange={(event) =>
-                            updateIntake(
-                              intake.id,
-                              "cupMl",
-                              Number(event.target.value),
-                            )
-                          }
+                          onChange={(event) => updateIntake(intake.id, "cupMl", parseNumericInput(event.target.value))}
                         />
                         <span>ml</span>
                       </div>
@@ -426,11 +428,7 @@ function App() {
                           type="number"
                           value={intake.fillPercent}
                           onChange={(event) =>
-                            updateIntake(
-                              intake.id,
-                              "fillPercent",
-                              Number(event.target.value),
-                            )
+                            updateIntake(intake.id, "fillPercent", parseNumericInput(event.target.value))
                           }
                         />
                         <span>%</span>
@@ -443,14 +441,21 @@ function App() {
                         step="0.5"
                         type="number"
                         value={intake.quantity}
-                        onChange={(event) =>
-                          updateIntake(
-                            intake.id,
-                            "quantity",
-                            Number(event.target.value),
-                          )
-                        }
+                        onChange={(event) => updateIntake(intake.id, "quantity", parseNumericInput(event.target.value))}
                       />
+                    </Field>
+
+                    <Field label="Tiempo desde esta bebida" hint="Ejemplo: 1 = hace una hora, 0.5 = media hora">
+                      <div className="input-suffix">
+                        <input
+                          min="0"
+                          step="0.25"
+                          type="number"
+                          value={intake.hoursAgo}
+                          onChange={(event) => updateIntake(intake.id, "hoursAgo", parseNumericInput(event.target.value))}
+                        />
+                        <span>h</span>
+                      </div>
                     </Field>
 
                     {intake.mode === "mix" && (
@@ -468,7 +473,7 @@ function App() {
                               updateIntake(
                                 intake.id,
                                 "alcoholPartPercent",
-                                Number(event.target.value),
+                                parseNumericInput(event.target.value),
                               )
                             }
                           />
@@ -488,13 +493,7 @@ function App() {
                           step="0.1"
                           type="number"
                           value={intake.grams}
-                          onChange={(event) =>
-                            updateIntake(
-                              intake.id,
-                              "grams",
-                              Number(event.target.value),
-                            )
-                          }
+                          onChange={(event) => updateIntake(intake.id, "grams", parseNumericInput(event.target.value))}
                         />
                         <span>g</span>
                       </div>
@@ -505,14 +504,20 @@ function App() {
                         step="0.5"
                         type="number"
                         value={intake.quantity}
-                        onChange={(event) =>
-                          updateIntake(
-                            intake.id,
-                            "quantity",
-                            Number(event.target.value),
-                          )
-                        }
+                        onChange={(event) => updateIntake(intake.id, "quantity", parseNumericInput(event.target.value))}
                       />
+                    </Field>
+                    <Field label="Tiempo desde esta carga" hint="Ejemplo: 1 = hace una hora, 0.5 = media hora">
+                      <div className="input-suffix">
+                        <input
+                          min="0"
+                          step="0.25"
+                          type="number"
+                          value={intake.hoursAgo}
+                          onChange={(event) => updateIntake(intake.id, "hoursAgo", parseNumericInput(event.target.value))}
+                        />
+                        <span>h</span>
+                      </div>
                     </Field>
                   </div>
                 )}
@@ -531,7 +536,8 @@ function App() {
         <aside className="panel">
           <div className="section-heading">
             <div>
-              <h2>Persona y tiempo</h2>
+              <p className="eyebrow">Paso 2</p>
+              <h2>Persona</h2>
             </div>
           </div>
 
@@ -570,26 +576,9 @@ function App() {
                   min="1"
                   type="number"
                   value={body.weightKg}
-                  onChange={(event) =>
-                    updateBody("weightKg", Number(event.target.value))
-                  }
+                  onChange={(event) => updateBody("weightKg", parseNumericInput(event.target.value))}
                 />
                 <span>kg</span>
-              </div>
-            </Field>
-
-            <Field label="Tiempo desde que empezo a beber">
-              <div className="input-suffix">
-                <input
-                  min="0"
-                  step="0.25"
-                  type="number"
-                  value={body.hours}
-                  onChange={(event) =>
-                    updateBody("hours", Number(event.target.value))
-                  }
-                />
-                <span>h</span>
               </div>
             </Field>
           </div>
@@ -618,9 +607,9 @@ function App() {
       <section className="formula-panel">
         <h2>Formula usada</h2>
         <p>
-          Etanol = ml de bebida x graduacion x 0.789. Alcoholemia inicial =
-          gramos de etanol / (peso corporal x coeficiente r). Resultado final =
-          alcoholemia inicial - horas x 0.15 g/L.
+          Etanol = ml de bebida x graduacion x 0.789. Alcoholemia inicial = gramos de etanol /
+          (peso corporal x coeficiente r). Para cada bebida se resta el tiempo propio de esa bebida
+          x 0.15 g/L. El resultado final es la suma de lo que queda de cada bebida.
         </p>
         <p>
           Los valores de r disponibles son los de la tabla por tipo corporal y
